@@ -1,0 +1,21 @@
+{
+  "name": "grok-cc",
+  "owner": {
+    "name": "thevibeworks"
+  },
+  "metadata": {
+    "description": "Grok plugins to use in Claude Code for delegation and code review.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "grok",
+      "description": "Use xAI's Grok CLI from Claude Code for code reviews and task delegation.",
+      "version": "0.1.0",
+      "author": {
+        "name": "thevibeworks"
+      },
+      "source": "./plugins/grok"
+    }
+  ]
+}
