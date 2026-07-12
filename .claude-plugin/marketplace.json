@@ -15,6 +15,7 @@
       "author": {
         "name": "thevibeworks"
       },
+      "keywords": ["grok", "xai", "code-review", "delegation", "second-opinion"],
       "source": "./plugins/grok"
     }
   ]

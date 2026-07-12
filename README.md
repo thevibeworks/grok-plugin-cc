@@ -1,6 +1,19 @@
+<div align="center">
+
 # Grok plugin for Claude Code
 
-Use xAI's [Grok CLI](https://x.ai/cli) from inside Claude Code for code reviews or to delegate tasks to Grok.
+**Use xAI's [Grok CLI](https://x.ai/cli) from inside Claude Code — code reviews, task delegation, session handoff.**
+
+8 commands · 1 rescue subagent · 0 runtime dependencies · Node 18.18+ · Apache-2.0
+
+[![CI](https://github.com/thevibeworks/grok-plugin-cc/actions/workflows/ci.yml/badge.svg)](https://github.com/thevibeworks/grok-plugin-cc/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+[Install](#install) · [Usage](#usage) · [Proof](#proof) · [Security model](#security-model) · [FAQ](#faq)
+
+<sub>AI agents / LLMs: read <a href="llms.txt">llms.txt</a> — a one-fetch summary of what this is, how to install it, and every command.</sub>
+
+</div>
 
 This is the Grok counterpart to OpenAI's [codex-plugin-cc](https://github.com/openai/codex-plugin-cc): same workflow, same command shapes, driven by the Grok CLI's headless mode instead of the Codex app server.
 
@@ -8,28 +21,21 @@ This is the Grok counterpart to OpenAI's [codex-plugin-cc](https://github.com/op
 
 ## What You Get
 
-- `/grok:review` for a read-only Grok code review of your working tree or branch
-- `/grok:adversarial-review` for a steerable challenge review that attacks the design, not just the code
-- `/grok:rescue`, `/grok:transfer`, `/grok:status`, `/grok:result`, and `/grok:cancel` to delegate work, hand off sessions, and manage background jobs
-
-## Requirements
-
-- **Grok CLI** (`grok`) signed in with an xAI account, or an `XAI_API_KEY` from [console.x.ai](https://console.x.ai)
-- **Node.js 18.18 or later**
-
-Usage contributes to your Grok usage limits.
+- `/grok:review` — read-only Grok code review of your working tree or branch, returned as structured findings (severity, file:line, confidence, recommendation)
+- `/grok:adversarial-review` — a steerable challenge review that attacks the design, not just the code
+- `/grok:rescue` — delegate investigation or fixes to Grok, foreground or background, resumable across calls
+- `/grok:transfer` — import the current Claude Code conversation into Grok and continue it there
+- `/grok:status`, `/grok:result`, `/grok:cancel` — job control for background work
+- `/grok:setup` — prerequisite and auth checks
 
 ## Install
 
-Add the marketplace in Claude Code:
+Requirements: **Node.js 18.18+** and the **Grok CLI** signed in with an xAI account (or an `XAI_API_KEY` from [console.x.ai](https://console.x.ai)). Usage contributes to your Grok usage limits.
+
+Add the marketplace and install in Claude Code:
 
 ```bash
 /plugin marketplace add thevibeworks/grok-plugin-cc
-```
-
-Install the plugin:
-
-```bash
 /plugin install grok@grok-cc
 ```
 
@@ -39,19 +45,11 @@ Reload plugins, then check prerequisites:
 /grok:setup
 ```
 
-If the Grok CLI is missing, install it yourself with:
+If the Grok CLI is missing:
 
 ```bash
-curl -fsSL https://x.ai/cli/install.sh | bash
-# or
-npm install -g @xai-official/grok
-```
-
-If Grok is installed but not signed in:
-
-```bash
-!grok login                # browser OAuth
-!grok login --device-auth  # headless machines / containers
+curl -fsSL https://x.ai/cli/install.sh | bash   # or: npm install -g @xai-official/grok
+grok login                                       # or: grok login --device-auth (headless machines)
 ```
 
 One simple first run:
@@ -61,6 +59,37 @@ One simple first run:
 /grok:status
 /grok:result
 ```
+
+## Proof
+
+We planted two bugs in a scratch repo — a percent-scale error (`cents - cents * percent` under a "percent arrives as 0-100" comment) and a refund function that deletes the whole pending-refund queue — and ran `/grok:review`. Verbatim excerpt:
+
+```
+Verdict: needs-attention
+
+No-ship: discount math still treats percent as a fraction while the comment
+says 0-100, and refund wipes every pending refund.
+
+### 1. [critical] Discount formula ignores 0-100 percent contract
+- Location: pay.js:1-5
+- Confidence: 95%
+
+### 2. [high] refund deletes all pendingRefunds unconditionally
+- Location: pay.js:6-10
+- Confidence: 88%
+```
+
+Both planted bugs, correct locations, and a session ID to reopen the run in Grok (`grok --resume <id>`). One demo transcript, not a benchmark — review quality is Grok's; what this plugin guarantees is the wiring and the enforcement around it.
+
+Reproduce:
+
+```bash
+npm test    # 52 tests, no dependencies: flag assembly (incl. the read-only
+            # allowlist), job state, git context collection, rendering, and an
+            # end-to-end companion run against a fake grok binary
+```
+
+Or plant your own bug: make a repo dirty, run `/grok:review`, and check that the process never receives shell or write tools (`ps` shows `--tools read_file,grep,list_dir`).
 
 ## Usage
 
@@ -79,7 +108,7 @@ Runs a Grok code review on your current work.
 /grok:review --background
 ```
 
-The review is read-only by construction: Grok runs with a tool allowlist of `read_file`, `grep`, and `list_dir` — no shell, no write tools, no subagents. Findings come back as structured JSON (severity, file, lines, confidence, recommendation) and are rendered verbatim.
+The review is read-only by construction: Grok runs with a tool allowlist of `read_file`, `grep`, and `list_dir` — no shell, no write tools, no subagents. Findings come back as structured JSON validated against a schema and are rendered verbatim.
 
 ### `/grok:adversarial-review`
 
@@ -145,11 +174,21 @@ Three different enforcement layers, applied per command:
 | `rescue` (default) | Grok `read-only` OS sandbox + file-edit tools removed. Shell stays available for tests/git. |
 | `rescue --write`   | Grok `workspace` sandbox, auto-approved tools. |
 
-Caveat worth knowing: Grok's OS sandbox uses Landlock (Linux) / Seatbelt (macOS). In containers without Landlock the sandbox silently degrades, which means a default rescue's shell could still write files. The review commands do not have this problem — their allowlist removes the shell entirely. If you need hard guarantees for rescues, run them in a disposable environment.
+Caveat worth knowing: Grok's OS sandbox uses Landlock (Linux) / Seatbelt (macOS). In containers without Landlock the sandbox **silently degrades** — we verified this empirically — which means a default rescue's shell could still write files there. The review commands do not have this problem; their allowlist removes the shell entirely. If you need hard guarantees for rescues, run them in a disposable environment.
+
+## When to use · When to skip
+
+Use it when you already work in Claude Code, have Grok (subscription or `XAI_API_KEY`), and want a second model's review or a place to hand off tasks without leaving your session.
+
+Skip it if:
+
+- **You don't use Grok.** The plugin is a wrapper around your local `grok` binary and account; without them it does nothing.
+- **You only want Claude-native review.** Claude Code's built-in review needs no plugin — this adds a *second* opinion from a different model, not a replacement.
+- **You need kernel-hard write isolation for rescues inside containers.** See the caveat above; use a disposable environment instead.
 
 ## Grok Integration
 
-The plugin wraps the Grok CLI's [headless mode](https://x.ai/cli) (`grok -p` with `--output-format json|streaming-json`). It uses the global `grok` binary and your existing `~/.grok` configuration and login. Reviews use `--json-schema` for validated structured output; task delegation records the Grok session ID so follow-ups can `--resume` it.
+The plugin wraps the Grok CLI's headless mode (`grok -p` with `--output-format json|streaming-json`). It uses the global `grok` binary and your existing `~/.grok` configuration and login. Reviews use `--json-schema` for validated structured output; task delegation records the Grok session ID so follow-ups can `--resume` it.
 
 Model and effort defaults come from your own Grok config (`~/.grok/config.toml`).
 
@@ -164,14 +203,12 @@ Model and effort defaults come from your own Grok config (`~/.grok/config.toml`)
 ## Development
 
 ```bash
-npm test   # node --test, no dependencies
+npm test   # node --test, zero dependencies
 ```
-
-The test suite covers the argument parser, job state store, git context collection, grok invocation flags (including the review allowlist), rendering, and an end-to-end companion run against a fake `grok` binary.
 
 ## Credits
 
-Architecture and command UX closely follow OpenAI's [codex-plugin-cc](https://github.com/openai/codex-plugin-cc) (Apache-2.0). See [NOTICE](NOTICE).
+Architecture, command UX, and the adversarial-review stance closely follow OpenAI's excellent [codex-plugin-cc](https://github.com/openai/codex-plugin-cc) (Apache-2.0) — if you use Codex, install that one too. Built on xAI's [Grok CLI](https://x.ai/cli), whose headless mode (`--json-schema`, session resume, `grok import`) made this plugin small. See [NOTICE](NOTICE).
 
 ## License
 

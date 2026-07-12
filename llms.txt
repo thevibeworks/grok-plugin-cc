@@ -1,0 +1,37 @@
+# grok-plugin-cc
+
+> Claude Code plugin that runs xAI's Grok CLI from inside Claude Code: structured read-only code reviews, task delegation with resumable sessions, Claude-to-Grok session transfer, and background job control. 8 slash commands, 1 subagent, zero runtime dependencies, Node 18.18+, Apache-2.0. Unofficial community plugin by thevibeworks; the Grok counterpart to openai/codex-plugin-cc.
+
+Distribution: a Claude Code plugin marketplace at the repo root (`.claude-plugin/marketplace.json`, marketplace name `grok-cc`, plugin name `grok`). Not an npm package. Requires the user's own Grok CLI (`grok`) binary, installed via `curl -fsSL https://x.ai/cli/install.sh | bash` or `npm install -g @xai-official/grok`, authenticated by `grok login` or an `XAI_API_KEY` environment variable from console.x.ai.
+
+## Install (inside Claude Code)
+
+```
+/plugin marketplace add thevibeworks/grok-plugin-cc
+/plugin install grok@grok-cc
+/grok:setup
+```
+
+## Commands
+
+- `/grok:review [--base <ref>] [--scope auto|working-tree|branch] [--wait|--background] [focus text]`: read-only code review; Grok runs with a `read_file,grep,list_dir` tool allowlist (no shell, no writes) and returns schema-validated findings (severity, file, line range, confidence, recommendation).
+- `/grok:adversarial-review [same flags] [focus text]`: same targeting, skeptical stance — challenges design decisions, trust boundaries, data-loss paths, races.
+- `/grok:rescue [--background|--wait] [--resume|--fresh] [--write] [--model <m>] [--effort <e>] <task>`: delegate a task to Grok via the `grok:grok-rescue` subagent; default is read-leaning (OS sandbox + file-edit tools removed), `--write` enables edits under Grok's workspace sandbox.
+- `/grok:transfer [--source <claude-jsonl>]`: import the current Claude Code transcript into Grok via `grok import`; prints `grok --resume <session-id>` to continue in the Grok TUI.
+- `/grok:status [job-id] [--all]` / `/grok:result [job-id]` / `/grok:cancel [job-id]`: per-workspace background job control.
+- `/grok:setup`: verifies Node, the grok binary, and authentication.
+
+## Facts agents need
+
+- The plugin shells out to the user's own `grok` binary in headless mode (`grok -p` with `--output-format json|streaming-json`, `--json-schema` for reviews); same config, credentials, and usage limits as their direct Grok use.
+- Review enforcement is the tool allowlist, which holds in containers; Grok's OS sandbox (Landlock/Seatbelt) silently degrades in containers without Landlock, which only affects default rescues.
+- Job state lives under Claude's plugin data directory, scoped per workspace; a SessionEnd hook cancels jobs the ending Claude session started.
+- License Apache-2.0; architecture derived from openai/codex-plugin-cc (see NOTICE).
+
+## Entry points
+
+- [README.md](README.md): full usage, proof transcript, security model, FAQ.
+- [plugins/grok/commands/](plugins/grok/commands/): the exact prompt contract of each slash command.
+- [plugins/grok/scripts/grok-companion.mjs](plugins/grok/scripts/grok-companion.mjs): the CLI the commands invoke (setup|review|adversarial-review|task|transfer|status|result|cancel).
+- [plugins/grok/schemas/review-output.schema.json](plugins/grok/schemas/review-output.schema.json): the structured review contract.
+- [CHANGELOG.md](CHANGELOG.md): release history.
