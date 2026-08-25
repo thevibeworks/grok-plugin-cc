@@ -83,11 +83,33 @@ test("task runs foreground, records grok session, and resume-last reuses it", ()
   assert.equal(resumed[resumed.indexOf("--resume") + 1], "fake-session-stream");
 });
 
+// The fake grok cannot tell us whether this machine can enforce a sandbox, so
+// the env override stands in for the machine. Both shapes are covered on
+// purpose: CI images and plain Debian/Ubuntu/WSL do not ship bubblewrap, and a
+// suite that only ever saw the sandboxed machine is why #1 shipped.
 test("task --write switches to the workspace sandbox", () => {
-  runJson(["task", "--write", "fix", "the", "bug"]);
+  runJson(["task", "--write", "fix", "the", "bug"], { GROK_COMPANION_SANDBOX: "on" });
   const calls = fake.readCalls();
   const writeCall = [...calls].reverse().find((call) => call.includes("--sandbox"));
   assert.equal(writeCall[writeCall.indexOf("--sandbox") + 1], "workspace");
+});
+
+test("task --write refuses on a machine with no sandbox enforcer", () => {
+  const result = runCompanion(["task", "--write", "fix", "the", "bug", "--json"], {
+    cwd: repoDir,
+    env: { ...baseEnv, GROK_COMPANION_SANDBOX: "off" }
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /workspace sandbox/);
+  assert.match(result.stderr, /bubblewrap/, "the message has to carry the fix");
+});
+
+test("task read-only still runs with no sandbox enforcer", () => {
+  const payload = runJson(["task", "look", "around"], { GROK_COMPANION_SANDBOX: "off" });
+  assert.ok(payload);
+  const call = [...fake.readCalls()].reverse().find((c) => c.includes("--disallowed-tools"));
+  assert.ok(call, "the deny list is still the guard");
+  assert.ok(!call.includes("--sandbox"), "an unenforceable sandbox flag must not be sent");
 });
 
 test("background task queues a job that the worker completes", async () => {

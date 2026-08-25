@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1 - 2026-08-25
+
+Fixed a start-up failure on Linux machines without a sandbox enforcer.
+
+- `--sandbox` is no longer sent unconditionally. Grok's Linux enforcer is
+  bubblewrap, which plain Debian/Ubuntu and WSL images do not ship, and grok
+  1.0.3 **refuses to start** when it is missing rather than warning and
+  continuing — so every sandboxed invocation failed with exit 1 and empty
+  stdout. Reported with a live repro by @roy7 in #1.
+- A read-leaning rescue now drops the flag and keeps its tool deny list, which
+  is the guard that never needed the kernel. `--write` refuses instead, because
+  there the workspace sandbox is the only thing bounding edits; the error names
+  `apt install -y bubblewrap`.
+- `GROK_COMPANION_SANDBOX=on|off` overrides the probe.
+- `--sandbox` is no longer re-sent on `--resume`. A profile that differs from
+  the session's saved one is a hard error, and omitting it is always accepted.
+- Security Model in the README documented the opposite behaviour (silent
+  degradation under Landlock), which was true of older Grok releases and is not
+  true of 1.0.3.
+
 ## 0.1.0 - 2026-07-12
 
 Initial release.

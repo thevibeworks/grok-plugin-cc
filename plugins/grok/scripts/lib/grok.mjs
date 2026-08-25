@@ -20,6 +20,43 @@ export const TASK_READ_DISALLOWED_TOOLS = "search_replace,write";
 const MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_MAX_TURNS = 50;
 
+// grok enforces `--sandbox` with a per-platform kernel mechanism, and on Linux
+// that mechanism is bubblewrap. When `bwrap` is missing grok does not warn and
+// continue -- it refuses to start:
+//
+//   error: this sandbox could not enforce its deny list on Linux: bwrap exec
+//   failed: No such file or directory (os error 2). Install bubblewrap with
+//   `apt install -y bubblewrap`. Refusing to start with denied paths
+//   unprotected.
+//
+// Exit 1, empty stdout. Plain Debian/Ubuntu and WSL images do not ship it, so
+// every sandboxed invocation failed on those machines with the cause several
+// layers from the symptom. Reported by @roy7 in #1 with a live repro.
+//
+// macOS (Seatbelt) and Windows need no extra package, so only Linux is probed.
+const LINUX_SANDBOX_ENFORCER = "bwrap";
+
+// GROK_COMPANION_SANDBOX overrides the probe: "off" for a machine that cannot
+// install the enforcer, "on" for a distro that enforces through something the
+// probe does not recognise. Unset means probe.
+export function sandboxEnforcerAvailable(platform = process.platform) {
+  const override = String(process.env.GROK_COMPANION_SANDBOX ?? "").toLowerCase();
+  if (["0", "off", "false", "none"].includes(override)) {
+    return false;
+  }
+  if (["1", "on", "true", "force"].includes(override)) {
+    return true;
+  }
+  if (platform !== "linux") {
+    return true;
+  }
+  return binaryAvailable(LINUX_SANDBOX_ENFORCER, ["--version"]).available;
+}
+
+export const SANDBOX_MISSING_HINT =
+  `the Linux sandbox enforcer (${LINUX_SANDBOX_ENFORCER}) is not installed; ` +
+  "install it with `apt install -y bubblewrap` (or the equivalent for your distro)";
+
 export function getGrokAvailability(cwd) {
   const status = binaryAvailable(GROK_BIN, ["--version"], { cwd });
   return {
@@ -65,8 +102,12 @@ function truncate(text, limit) {
 
 export function buildHeadlessArgs(options = {}) {
   const args = [];
+  const resuming = Boolean(options.resumeSessionId);
+  // Injectable so the unit suite can exercise both machines. Callers leave it
+  // unset and get the real probe.
+  const sandboxed = options.sandboxEnforced ?? sandboxEnforcerAvailable();
 
-  if (options.resumeSessionId) {
+  if (resuming) {
     args.push("--resume", String(options.resumeSessionId));
   }
   args.push("-p", String(options.prompt ?? ""));
@@ -98,12 +139,27 @@ export function buildHeadlessArgs(options = {}) {
       args.push("--always-approve");
       break;
     case "task-read":
-      args.push("--sandbox", "read-only");
+      // The deny list is the primary guard here and does not need the kernel,
+      // so a machine without the enforcer still runs -- with one belt instead
+      // of two. Dropping the flag is what keeps grok from refusing to start.
+      if (sandboxed && !resuming) {
+        args.push("--sandbox", "read-only");
+      }
       args.push("--disallowed-tools", TASK_READ_DISALLOWED_TOOLS);
       args.push("--always-approve");
       break;
     case "task-write":
-      args.push("--sandbox", "workspace");
+      // Here the sandbox is the only thing keeping writes inside the
+      // workspace. Degrading silently would hand an agent the whole disk, so
+      // this fails with the fix in the message instead.
+      if (!sandboxed) {
+        throw new Error(
+          `grok task-write needs a workspace sandbox and ${SANDBOX_MISSING_HINT}.`
+        );
+      }
+      if (!resuming) {
+        args.push("--sandbox", "workspace");
+      }
       args.push("--always-approve");
       break;
     default:
