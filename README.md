@@ -132,7 +132,7 @@ Hands a task to Grok through the `grok:grok-rescue` subagent.
 /grok:rescue --background investigate the regression
 ```
 
-- Default rescues run read-leaning: Grok keeps its shell for running tests and git, but loses the direct file-edit tools and runs under Grok's `read-only` OS sandbox where the kernel supports it.
+- Default rescues run read-leaning: Grok keeps its shell for running tests and git, but loses the direct file-edit tools and runs under Grok's `read-only` OS sandbox where the kernel can enforce one (see [Security Model](#security-model) — on Linux that means `bwrap` is installed).
 - `--write` switches to a write-capable run under Grok's `workspace` sandbox.
 - `--resume` continues the latest rescue session for this repo; `--fresh` forces a new one. Without either flag the plugin offers to continue when a resumable session exists.
 - Model and reasoning effort default to Grok's own choices; pass `--model` / `--effort` to override.
@@ -174,7 +174,20 @@ Three different enforcement layers, applied per command:
 | `rescue` (default) | Grok `read-only` OS sandbox + file-edit tools removed. Shell stays available for tests/git. |
 | `rescue --write`   | Grok `workspace` sandbox, auto-approved tools. |
 
-Caveat worth knowing: Grok's OS sandbox uses Landlock (Linux) / Seatbelt (macOS). In containers without Landlock the sandbox **silently degrades** — we verified this empirically — which means a default rescue's shell could still write files there. The review commands do not have this problem; their allowlist removes the shell entirely. If you need hard guarantees for rescues, run them in a disposable environment.
+Caveat worth knowing: Grok's OS sandbox needs a kernel enforcer, and on Linux that is now **bubblewrap** (`bwrap`), which plain Debian/Ubuntu and WSL images do not ship. Older Grok releases used Landlock and degraded silently when it was unavailable; **grok 1.0.3 does the opposite and refuses to start** rather than run with an unenforced deny list — reported with a live repro in [#1](https://github.com/thevibeworks/grok-plugin-cc/issues/1).
+
+So the plugin probes before it asks:
+
+| Machine | `rescue` (read-leaning) | `rescue --write` |
+| --- | --- | --- |
+| enforcer present | `--sandbox read-only` + deny list | `--sandbox workspace` |
+| enforcer missing | runs, **deny list only** — the flag is dropped because sending it would just fail | **refuses**, and names the fix |
+
+The asymmetry is deliberate. A read-leaning rescue's primary guard is the tool deny list, which needs no kernel, so losing the sandbox costs one belt out of two. For `--write` the sandbox is the *only* thing keeping edits inside the workspace, and degrading that silently would hand an agent the whole disk — so it fails with `apt install -y bubblewrap` in the message.
+
+Override the probe with `GROK_COMPANION_SANDBOX=on|off` if your distro enforces through something we do not recognise, or if you have decided to accept the risk.
+
+The review commands are unaffected either way: their allowlist removes the shell entirely, so it holds everywhere, containers included. If you need hard guarantees for rescues, install the enforcer or run them in a disposable environment.
 
 ## When to use · When to skip
 
